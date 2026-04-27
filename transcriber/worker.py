@@ -1,6 +1,5 @@
 import logging
 import multiprocessing
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -29,8 +28,8 @@ def _init_worker(model_size: str, compute_type: str, verbose: bool) -> None:
     _transcriber = Transcriber(model_size=model_size, compute_type=compute_type)
 
 
-def process_job(args: tuple) -> None:
-    position, total, job_id, file_path_str, language, chunk_seconds, output_formats, output_dir_str = args
+def process_job(args: tuple) -> str:
+    position, total, job_id, file_path_str, language, chunk_seconds, output_formats, output_dir_str, progress_queue = args
 
     file_path = Path(file_path_str)
     output_dir = Path(output_dir_str)
@@ -45,46 +44,48 @@ def process_job(args: tuple) -> None:
         audio_path = extract_audio(file_path, output_dir=temp_dir)
         if audio_path is None:
             db.mark_failed(job_id, "ffmpeg audio extraction failed")
-            return
+            return file_path.name
 
         chunks = split_audio(audio_path, chunk_seconds)
         if not chunks:
             db.mark_failed(job_id, "no chunks produced by ffmpeg")
-            return
+            return file_path.name
 
         chunk_segments: list[tuple[int, list[dict]]] = []
+        n_chunks = len(chunks)
         for i, chunk_path in enumerate(chunks):
             segs = _transcriber.transcribe_file(chunk_path, language=language)
             if segs is None:
                 db.mark_failed(job_id, f"transcription failed on {chunk_path.name}")
-                return
+                return file_path.name
             chunk_segments.append((i, segs))
-            logger.info(f"[CHUNK] {chunk_path.name} done")
-            db.update_progress(job_id, int((i + 1) / len(chunks) * 100))
+            db.update_progress(job_id, int((i + 1) / n_chunks * 100))
+            progress_queue.put((file_path.name, i + 1, n_chunks))
 
         segments = merge_chunks(chunk_segments, chunk_seconds)
         logger.info("[MERGE] completed")
 
-        output_dir.mkdir(parents=True, exist_ok=True)
         stem = file_path.stem
+        file_output_dir = output_dir / stem
+        file_output_dir.mkdir(parents=True, exist_ok=True)
         written: list[str] = []
 
         for fmt in output_formats:
             if fmt == "txt":
-                out = output_dir / f"{stem}.txt"
+                out = file_output_dir / f"{stem}.txt"
                 fmt_txt.write_txt(segments, out)
                 written.append(str(out))
             elif fmt == "srt":
-                out = output_dir / f"{stem}.srt"
+                out = file_output_dir / f"{stem}.srt"
                 fmt_srt.write_srt(segments, out)
                 written.append(str(out))
             elif fmt == "json":
-                out = output_dir / f"{stem}.json"
+                out = file_output_dir / f"{stem}.json"
                 fmt_json.write_json(segments, out)
                 written.append(str(out))
 
         db.mark_completed(job_id, ",".join(written))
-        logger.info(f"[SUCCESS] {file_path.name}")
+        logger.info(f"[SUCCESS] {file_path.name} -> {', '.join(written)}")
 
     except Exception as e:
         logger.error(f"{prefix} Error processing {file_path.name}: {e}")
@@ -92,3 +93,5 @@ def process_job(args: tuple) -> None:
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return file_path.name

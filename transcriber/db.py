@@ -24,11 +24,25 @@ def init_db() -> None:
                 created_at  TEXT    NOT NULL
             )
         """)
+        # Remove duplicate rows, keeping the latest entry per file path.
+        conn.execute("""
+            DELETE FROM jobs WHERE id NOT IN (
+                SELECT MAX(id) FROM jobs GROUP BY file_path
+            )
+        """)
+        # Any in_progress job from a previous crashed run is stale — reset it.
+        conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'in_progress'")
         conn.commit()
 
 
-def add_job(file_path: str) -> int:
+def add_job(file_path: str) -> int | None:
     with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id FROM jobs WHERE file_path = ? AND status NOT IN ('failed')",
+            (file_path,),
+        ).fetchone()
+        if existing:
+            return None
         cur = conn.execute(
             "INSERT INTO jobs (file_path, status, created_at) VALUES (?, 'pending', ?)",
             (file_path, datetime.now(timezone.utc).isoformat()),
@@ -74,3 +88,15 @@ def mark_failed(job_id: int, error: str) -> None:
             (error, job_id),
         )
         conn.commit()
+
+
+def force_reset(file_paths: list[str]) -> int:
+    placeholders = ",".join("?" * len(file_paths))
+    with _connect() as conn:
+        cur = conn.execute(
+            f"UPDATE jobs SET status = 'pending', progress = 0, output_path = NULL, error = NULL"
+            f" WHERE file_path IN ({placeholders})",
+            file_paths,
+        )
+        conn.commit()
+        return cur.rowcount

@@ -1,7 +1,19 @@
 import logging
 from pathlib import Path
 
+from tqdm import tqdm
+
 from transcriber.config import SUPPORTED_FORMATS
+
+
+class _TqdmHandler(logging.StreamHandler):
+    """Logging handler that writes through tqdm so log lines don't break the progress bar."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            tqdm.write(self.format(record))
+        except Exception:
+            self.handleError(record)
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
@@ -10,10 +22,9 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     logger.setLevel(level)
 
     if not logger.handlers:
-        handler = logging.StreamHandler()
+        handler = _TqdmHandler()
         handler.setLevel(level)
-        formatter = logging.Formatter("[%(levelname)s] %(message)s")
-        handler.setFormatter(formatter)
+        handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         logger.addHandler(handler)
 
     return logger
