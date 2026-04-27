@@ -1,12 +1,12 @@
 import logging
 from pathlib import Path
 
-from transcribe_cli.config import SUPPORTED_FORMATS
+from transcriber.config import SUPPORTED_FORMATS
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
     level = logging.DEBUG if verbose else logging.INFO
-    logger = logging.getLogger("transcribe_cli")
+    logger = logging.getLogger("transcriber")
     logger.setLevel(level)
 
     if not logger.handlers:

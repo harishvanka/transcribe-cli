@@ -4,10 +4,10 @@ from typing import Optional
 
 import typer
 
-from transcribe_cli.config import DEFAULT_MODEL, DEFAULT_OUTPUT_DIR, VALID_MODELS
-from transcribe_cli.ffmpeg_utils import extract_audio
-from transcribe_cli.transcriber import Transcriber
-from transcribe_cli.utils import collect_media_files, setup_logging
+from transcriber.config import DEFAULT_MODEL, DEFAULT_OUTPUT_DIR, VALID_MODELS
+from transcriber.ffmpeg_utils import extract_audio
+from transcriber.transcriber import Transcriber
+from transcriber.utils import collect_media_files, setup_logging
 
 app = typer.Typer(help="Transcribe audio/video files to text using faster-whisper.")
 

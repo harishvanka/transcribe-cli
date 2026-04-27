@@ -12,10 +12,10 @@ External runtime dependency: **ffmpeg** must be installed and on `PATH`.
 
 ```bash
 # Single file
-python -m transcribe_cli <file> [--model small|medium|large] [--output-dir ./outputs] [--language en] [-v]
+python -m transcriber <file> [--model small|medium|large] [--output-dir ./outputs] [--language en] [-v]
 
 # Directory of media files
-python -m transcribe_cli <directory>
+python -m transcriber <directory>
 ```
 
 Supported input formats: `.mp4`, `.mkv`, `.mp3`, `.wav`.

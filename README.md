@@ -48,10 +48,10 @@ pip install typer faster-whisper
 
 ```bash
 # Transcribe a single file
-python -m transcribe_cli path/to/file.mp4
+python -m transcriber path/to/file.mp4
 
 # Transcribe all media files in a directory
-python -m transcribe_cli path/to/directory/
+python -m transcriber path/to/directory/
 ```
 
 Transcripts are saved as `.txt` files in `./outputs/` by default.

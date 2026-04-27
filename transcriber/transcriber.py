@@ -3,9 +3,9 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from transcribe_cli.config import DEFAULT_COMPUTE_TYPE
+from transcriber.config import DEFAULT_COMPUTE_TYPE
 
-logger = logging.getLogger("transcribe_cli")
+logger = logging.getLogger("transcriber")
 
 
 class Transcriber:

@@ -3,9 +3,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from transcribe_cli.config import FFMPEG_CHANNELS, FFMPEG_SAMPLE_RATE
+from transcriber.config import FFMPEG_CHANNELS, FFMPEG_SAMPLE_RATE
 
-logger = logging.getLogger("transcribe_cli")
+logger = logging.getLogger("transcriber")
 
 
 def extract_audio(input_path: Path) -> Path | None:
