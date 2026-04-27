@@ -48,23 +48,70 @@ pip install typer faster-whisper
 
 ```bash
 # Transcribe a single file
-python -m transcriber path/to/file.mp4
+python -m transcriber transcribe path/to/file.mp4
 
 # Transcribe all media files in a directory
-python -m transcriber path/to/directory/
+python -m transcriber transcribe path/to/directory/
+
+# Resume any pending or failed jobs from a previous run
+python -m transcriber resume
 ```
 
-Transcripts are saved as `.txt` files in `./outputs/` by default.
+Transcripts are saved in `./outputs/` by default.
 
-## Options
+## Commands
+
+### `transcribe`
+
+Queues and processes media files. Skips files that were already completed in a previous run; pass `--resume` to also retry failed ones.
+
+```bash
+python -m transcriber transcribe path/to/directory/ \
+  --model medium \
+  --workers 4 \
+  --chunk 300 \
+  --output txt,srt,json \
+  --language en \
+  --verbose
+```
 
 | Option | Default | Description |
 |---|---|---|
 | `--model` | `small` | Whisper model size: `small`, `medium`, `large` |
 | `--output-dir` | `./outputs` | Directory to save transcripts |
 | `--language` | auto-detect | Language code (e.g. `en`, `fr`) |
+| `--workers` | `2` | Number of parallel worker processes |
+| `--chunk` | `600` | Audio chunk size in seconds |
+| `--output` | `txt` | Comma-separated output formats: `txt`, `srt`, `json` |
+| `--resume` | off | Also retry previously failed jobs |
 | `-v`, `--verbose` | off | Enable verbose logging |
 
-## Supported Formats
+### `resume`
+
+Re-runs all pending and failed jobs from the job database without re-scanning the filesystem.
+
+```bash
+python -m transcriber resume --workers 4 --output txt,srt
+```
+
+Accepts the same options as `transcribe` except `input_path` and `--resume`.
+
+## Output Formats
+
+| Format | Extension | Description |
+|---|---|---|
+| `txt` | `.txt` | Plain text transcript |
+| `srt` | `.srt` | SubRip subtitle file with timestamps |
+| `json` | `.json` | Structured JSON with per-segment start/end times and text |
+
+## Job Persistence
+
+Each run records jobs in a SQLite database at `~/.transcriber/jobs.db`. This lets you:
+
+- Skip already-completed files when re-running over the same directory
+- Resume interrupted or failed jobs with the `resume` command
+- Track per-file progress (0–100 %) and error messages
+
+## Supported Input Formats
 
 `.mp4`, `.mkv`, `.mp3`, `.wav`

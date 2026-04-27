@@ -8,9 +8,10 @@ from transcriber.config import FFMPEG_CHANNELS, FFMPEG_SAMPLE_RATE
 logger = logging.getLogger("transcriber")
 
 
-def extract_audio(input_path: Path) -> Path | None:
-    temp_dir = Path(tempfile.mkdtemp())
-    output_path = temp_dir / f"{input_path.stem}.wav"
+def extract_audio(input_path: Path, output_dir: Path | None = None) -> Path | None:
+    if output_dir is None:
+        output_dir = Path(tempfile.mkdtemp())
+    output_path = output_dir / f"{input_path.stem}.wav"
 
     cmd = [
         "ffmpeg",

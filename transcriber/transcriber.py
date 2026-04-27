@@ -13,13 +13,13 @@ class Transcriber:
         logger.info(f"Loading model: {model_size} (compute_type={compute_type})")
         self.model = WhisperModel(model_size, compute_type=compute_type)
 
-    def transcribe_file(self, audio_path: Path, language: str | None = None) -> str | None:
+    def transcribe_file(self, audio_path: Path, language: str | None = None) -> list[dict] | None:
         try:
-            segments, _info = self.model.transcribe(
-                str(audio_path),
-                language=language,
-            )
-            return " ".join(segment.text.strip() for segment in segments)
+            segments, _info = self.model.transcribe(str(audio_path), language=language)
+            return [
+                {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+                for seg in segments
+            ]
         except Exception as e:
             logger.error(f"Transcription failed for {audio_path.name}: {e}")
             return None
