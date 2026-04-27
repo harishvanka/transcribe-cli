@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+site-packages/
+*.so
+*.wheel
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+pip-wheel-metadata/
+MANIFEST
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Misc
+*.log
+.DS_Store
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Output
+outputs/
