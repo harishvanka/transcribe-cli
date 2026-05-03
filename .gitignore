@@ -39,3 +39,6 @@ htmlcov/
 
 # Output
 outputs/
+
+.claude
+transcripts

@@ -1,11 +1,9 @@
 import logging
-import multiprocessing
 import sqlite3
-import threading
+import time
 from pathlib import Path
 
 import typer
-from tqdm import tqdm
 
 from transcriber import db
 from transcriber.config import (
@@ -16,10 +14,46 @@ from transcriber.config import (
     VALID_FORMATS,
     VALID_MODELS,
 )
+from transcriber.ffmpeg_utils import MediaInfo, probe_media_info
+from transcriber.transcriber import Transcriber
 from transcriber.utils import collect_media_files, setup_logging
-from transcriber.worker import _init_worker, process_job
+from transcriber.worker import process_file
 
 app = typer.Typer(help="Transcribe audio/video files to text using faster-whisper.")
+
+
+def _fmt_sec(s: float) -> str:
+    if s < 60:
+        return f"{s:.1f}s"
+    m, rem = divmod(int(s), 60)
+    return f"{m}m{rem:02d}s"
+
+
+def _fmt_done(filename: str, times: dict[str, float]) -> str:
+    labels = [("extract", "demux"), ("split", "split"), ("transcribe", "transcribe"), ("write", "write")]
+    parts = [f"{lbl}={_fmt_sec(times[k])}" for k, lbl in labels if k in times]
+    return f"  [done] {filename}  {' | '.join(parts)}  total={_fmt_sec(times.get('total', 0))}"
+
+
+def _print_media_info(file_path: Path, info: MediaInfo) -> None:
+    sep = "─" * 48
+    lines = [
+        sep,
+        f"  File:        {file_path.name}",
+        f"  Size:        {info.file_size_str}",
+        f"  Duration:    {info.duration_str}",
+    ]
+    if info.resolution:
+        fps_str = f"  @  {info.fps:.3f} fps" if info.fps else ""
+        lines.append(f"  Resolution:  {info.resolution}{fps_str}")
+    if info.video_codec:
+        lines.append(f"  Video:       {info.video_codec.upper()}")
+    if info.audio_codec:
+        lines.append(f"  Audio:       {info.audio_codec.upper()}")
+    if info.bitrate_kbps:
+        lines.append(f"  Bitrate:     {info.bitrate_kbps:,} kb/s")
+    lines.append(sep)
+    print("\n".join(lines))
 
 
 def _parse_output_formats(output: str, logger: logging.Logger) -> list[str]:
@@ -33,52 +67,51 @@ def _parse_output_formats(output: str, logger: logging.Logger) -> list[str]:
 
 def _dispatch(
     jobs: list[sqlite3.Row],
-    workers: int,
     model: str,
     language: str | None,
     chunk_seconds: int,
     output_formats: list[str],
     output_dir: Path,
-    verbose: bool,
 ) -> None:
     logger = logging.getLogger("transcriber")
     total = len(jobs)
-    effective_workers = min(workers, total)
-    logger.info(f"Dispatching {total} job(s) across {effective_workers} worker(s)")
 
-    with multiprocessing.Manager() as manager:
-        progress_queue = manager.Queue()
+    transcriber = Transcriber(model_size=model, compute_type="int8")
 
-        job_args = [
-            (i, total, row["id"], row["file_path"], language, chunk_seconds, output_formats, str(output_dir), progress_queue)
-            for i, row in enumerate(jobs, start=1)
-        ]
+    t_all = time.perf_counter()
+    succeeded = 0
 
-        with multiprocessing.Pool(
-            processes=effective_workers,
-            initializer=_init_worker,
-            initargs=(model, "int8", verbose),
-        ) as pool:
-            with tqdm(total=total, desc="Transcribing", unit="file", dynamic_ncols=True) as pbar:
-                stop_event = threading.Event()
+    for idx, row in enumerate(jobs, 1):
+        file_path = Path(row["file_path"])
 
-                def _drain_progress() -> None:
-                    while not stop_event.is_set():
-                        try:
-                            filename, chunk_idx, n_chunks = progress_queue.get(timeout=0.3)
-                            pbar.set_postfix_str(f"{filename} [{chunk_idx}/{n_chunks} chunks]")
-                        except Exception:
-                            pass
+        if total > 1:
+            print(f"\n── {idx}/{total}: {file_path.name} ──")
 
-                drainer = threading.Thread(target=_drain_progress, daemon=True)
-                drainer.start()
-                try:
-                    for filename in pool.imap_unordered(process_job, job_args):
-                        pbar.set_postfix_str(filename)
-                        pbar.update(1)
-                finally:
-                    stop_event.set()
-                    drainer.join(timeout=1)
+        info = probe_media_info(file_path)
+        _print_media_info(file_path, info)
+        print()
+
+        times = process_file(
+            job_id=row["id"],
+            file_path=file_path,
+            language=language,
+            chunk_seconds=chunk_seconds,
+            output_formats=output_formats,
+            output_dir=output_dir,
+            transcriber=transcriber,
+        )
+
+        if times is not None:
+            print(_fmt_done(file_path.name, times))
+            succeeded += 1
+        else:
+            logger.error(f"Failed: {file_path.name}")
+
+        print()
+
+    if total > 1:
+        elapsed = time.perf_counter() - t_all
+        print(f"Finished {succeeded}/{total} file(s) in {_fmt_sec(elapsed)}")
 
 
 @app.command()
@@ -87,7 +120,7 @@ def transcribe(
     model: str = typer.Option(DEFAULT_MODEL, help=f"Whisper model size: {VALID_MODELS}"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Directory to save transcripts."),
     language: str | None = typer.Option(None, help="Language code (e.g. en). Default: auto-detect."),
-    workers: int = typer.Option(DEFAULT_WORKERS, help="Number of parallel worker processes."),
+    workers: int = typer.Option(DEFAULT_WORKERS, help="(Unused — processing is sequential)"),
     chunk: int = typer.Option(DEFAULT_CHUNK_SECONDS, "--chunk", help="Chunk size in seconds."),
     output: str = typer.Option("txt,srt,json", help="Comma-separated output formats: txt,srt,json"),
     resume: bool = typer.Option(False, "--resume", help="Also re-run previously failed jobs."),
@@ -121,12 +154,13 @@ def transcribe(
     skipped = len(files) - new_count
     logger.info(f"Queued {new_count} new file(s), skipped {skipped} already in queue")
 
-    pending = db.get_pending_jobs(include_failed=resume)
+    scoped = {str(f) for f in files}
+    pending = [r for r in db.get_pending_jobs(include_failed=resume) if r["file_path"] in scoped]
     if not pending:
         logger.info("No pending jobs.")
         raise typer.Exit()
 
-    _dispatch(pending, workers, model, language, chunk, output_formats, output_dir, verbose)
+    _dispatch(pending, model, language, chunk, output_formats, output_dir)
 
 
 @app.command()
@@ -134,7 +168,6 @@ def resume(
     model: str = typer.Option(DEFAULT_MODEL, help=f"Whisper model size: {VALID_MODELS}"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Directory to save transcripts."),
     language: str | None = typer.Option(None, help="Language code (e.g. en). Default: auto-detect."),
-    workers: int = typer.Option(DEFAULT_WORKERS, help="Number of parallel worker processes."),
     chunk: int = typer.Option(DEFAULT_CHUNK_SECONDS, "--chunk", help="Chunk size in seconds."),
     output: str = typer.Option("txt,srt,json", help="Comma-separated output formats: txt,srt,json"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging."),
@@ -150,4 +183,4 @@ def resume(
         raise typer.Exit()
 
     logger.info(f"Resuming {len(pending)} job(s)")
-    _dispatch(pending, workers, model, language, chunk, output_formats, output_dir, verbose)
+    _dispatch(pending, DEFAULT_MODEL, None, DEFAULT_CHUNK_SECONDS, output_formats, output_dir)
