@@ -7,6 +7,7 @@ import typer
 
 from transcriber import db
 from transcriber.config import (
+    DEFAULT_BEAM_SIZE,
     DEFAULT_CHUNK_SECONDS,
     DEFAULT_MODEL,
     DEFAULT_OUTPUT_DIR,
@@ -72,11 +73,13 @@ def _dispatch(
     chunk_seconds: int,
     output_formats: list[str],
     output_dir: Path,
+    beam_size: int = DEFAULT_BEAM_SIZE,
+    vad_filter: bool = False,
 ) -> None:
     logger = logging.getLogger("transcriber")
     total = len(jobs)
 
-    transcriber = Transcriber(model_size=model, compute_type="int8")
+    transcriber = Transcriber(model_size=model, beam_size=beam_size, vad_filter=vad_filter)
 
     t_all = time.perf_counter()
     succeeded = 0
@@ -123,6 +126,8 @@ def transcribe(
     workers: int = typer.Option(DEFAULT_WORKERS, help="(Unused — processing is sequential)"),
     chunk: int = typer.Option(DEFAULT_CHUNK_SECONDS, "--chunk", help="Chunk size in seconds."),
     output: str = typer.Option("txt,srt,json", help="Comma-separated output formats: txt,srt,json"),
+    beam_size: int = typer.Option(DEFAULT_BEAM_SIZE, "--beam-size", help="Beam size (1=greedy/fastest, 5=default). Reduce to 1-2 for a ~2x CPU speedup."),
+    vad: bool = typer.Option(False, "--vad/--no-vad", help="Skip silent regions (VAD). Speeds up content with long pauses."),
     resume: bool = typer.Option(False, "--resume", help="Also re-run previously failed jobs."),
     force: bool = typer.Option(False, "--force", help="Re-transcribe already completed files."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging."),
@@ -160,7 +165,7 @@ def transcribe(
         logger.info("No pending jobs.")
         raise typer.Exit()
 
-    _dispatch(pending, model, language, chunk, output_formats, output_dir)
+    _dispatch(pending, model, language, chunk, output_formats, output_dir, beam_size=beam_size, vad_filter=vad)
 
 
 @app.command()

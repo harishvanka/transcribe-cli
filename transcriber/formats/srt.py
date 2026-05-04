@@ -17,3 +17,20 @@ def write_srt(segments: list[dict], output_path: Path) -> None:
         lines.append(seg["text"])
         lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def append_srt(segments: list[dict], output_path: Path, start_index: int = 1) -> int:
+    """Append segments to an existing SRT file. Returns the next subtitle index."""
+    if not segments:
+        return start_index
+    lines: list[str] = []
+    idx = start_index
+    for seg in segments:
+        lines.append(str(idx))
+        lines.append(f"{_ts(seg['start'])} --> {_ts(seg['end'])}")
+        lines.append(seg["text"])
+        lines.append("")
+        idx += 1
+    with output_path.open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return idx
