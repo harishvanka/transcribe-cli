@@ -1,55 +1,79 @@
 # Usage Guide
 
-## 1. Download the Whisper model
+## 1. Choose a backend
 
-`faster-whisper` downloads models from [Hugging Face Hub](https://huggingface.co/Systran) and caches them locally. You can let the first run trigger the download automatically, or pre-download to avoid delays when transcribing.
+The tool supports two inference backends, selected with `--backend`:
 
-### Option A — pre-download with the Hugging Face CLI (recommended)
+| Backend | Flag | Hardware used | Requires |
+|---|---|---|---|
+| **DirectML** (default) | `--backend directml` | GPU on Windows (Qualcomm Adreno, AMD, Intel) via DirectML | `onnxruntime-directml`, `optimum`, `transformers` |
+| **CPU** | `--backend cpu` | All CPU cores via CTranslate2 | `faster-whisper` |
+
+---
+
+## 2. Install packages
+
+### DirectML backend (GPU on Windows)
 
 ```bash
-pip install huggingface-hub
+# Remove onnxruntime if already installed — it conflicts with the DirectML build
+pip uninstall onnxruntime -y
+
+pip install onnxruntime-directml
+pip install "optimum[exporters]" transformers soundfile
+
+# torch is only needed on the first run to export the model to ONNX;
+# after that the cached ONNX files are reused without torch.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-Then download whichever model size you plan to use:
+### CPU backend (faster-whisper)
 
 ```bash
-# small  (~460 MB) — fast, good for clear speech
-huggingface-cli download Systran/faster-whisper-small
-
-# medium (~1.5 GB) — better accuracy
-huggingface-cli download Systran/faster-whisper-medium
-
-# large  (~3 GB)   — best accuracy, slowest
-huggingface-cli download Systran/faster-whisper-large-v3
+pip install faster-whisper
 ```
 
-Models are cached at:
+---
+
+## 3. Download / cache models
+
+### DirectML backend
+
+Models are downloaded from [Hugging Face](https://huggingface.co/openai) and automatically exported to ONNX on first use. The ONNX files are cached at:
 
 | OS | Cache location |
 |---|---|
 | Windows | `C:\Users\<you>\.cache\huggingface\hub\` |
 | macOS / Linux | `~/.cache/huggingface/hub/` |
 
-### Option B — let the tool download on first use
+The first run for a given model size will take a few extra minutes for the export step. Subsequent runs reuse the cached ONNX files instantly.
 
-Just run a transcription command (see below). The model will be downloaded automatically before transcription starts. Subsequent runs reuse the cached model.
+### CPU backend
 
-### Option C — use a local model directory
-
-If you have a model saved to a local folder (e.g. from a private mirror), pass its path as `--model`:
+`faster-whisper` downloads CTranslate2 models from [Hugging Face (Systran)](https://huggingface.co/Systran) and caches them in the same location. Pre-download to avoid delays:
 
 ```bash
-python -m transcriber transcribe video.mp4 --model /path/to/faster-whisper-small
+pip install huggingface-hub
+
+huggingface-cli download Systran/faster-whisper-small   # ~460 MB
+huggingface-cli download Systran/faster-whisper-medium  # ~1.5 GB
+huggingface-cli download Systran/faster-whisper-large-v3  # ~3 GB
 ```
 
 ---
 
-## 2. Transcribe files
+## 4. Transcribe files
 
-### Single file
+### Single file (DirectML backend, default)
 
 ```bash
 python -m transcriber transcribe path/to/video.mp4
+```
+
+### Single file — CPU backend
+
+```bash
+python -m transcriber transcribe path/to/video.mp4 --backend cpu
 ```
 
 ### All media files in a directory
@@ -58,11 +82,12 @@ python -m transcriber transcribe path/to/video.mp4
 python -m transcriber transcribe path/to/folder/
 ```
 
-Transcripts are written to `./outputs/` by default. Supported input formats: `.mp4`, `.mkv`, `.mp3`, `.wav`.
+Transcripts are written to `./outputs/<filename>/` by default.  
+Supported input formats: `.mp4`, `.mkv`, `.mp3`, `.wav`.
 
 ---
 
-## 3. Common examples
+## 5. Common examples
 
 **Use a larger model for better accuracy:**
 
@@ -70,16 +95,10 @@ Transcripts are written to `./outputs/` by default. Supported input formats: `.m
 python -m transcriber transcribe lecture.mp4 --model medium
 ```
 
-**Transcribe in parallel with 4 workers:**
+**Export SRT and JSON only (no plain text):**
 
 ```bash
-python -m transcriber transcribe recordings/ --workers 4
-```
-
-**Export to SRT and JSON in addition to plain text:**
-
-```bash
-python -m transcriber transcribe meeting.mp4 --output txt,srt,json
+python -m transcriber transcribe meeting.mp4 --output srt,json
 ```
 
 **Force the language (skips auto-detection, slightly faster):**
@@ -87,6 +106,20 @@ python -m transcriber transcribe meeting.mp4 --output txt,srt,json
 ```bash
 python -m transcriber transcribe interview.mp3 --language en
 ```
+
+**Speed up CPU transcription with greedy decoding (beam-size 1):**
+
+```bash
+python -m transcriber transcribe video.mp4 --backend cpu --beam-size 1
+```
+
+**Skip silent regions (useful for recordings with long pauses):**
+
+```bash
+python -m transcriber transcribe podcast.mp3 --backend cpu --vad
+```
+
+> `--vad` is only supported by the `cpu` backend; it is silently ignored with `--backend directml`.
 
 **Smaller chunks for very long files (reduces peak memory):**
 
@@ -100,22 +133,46 @@ python -m transcriber transcribe documentary.mp4 --chunk 300
 python -m transcriber transcribe video.mp4 --output-dir ./transcripts
 ```
 
-**Combine options:**
+**Re-transcribe a file that already completed:**
+
+```bash
+python -m transcriber transcribe video.mp4 --force
+```
+
+**Also retry previously failed jobs in the same directory:**
+
+```bash
+python -m transcriber transcribe recordings/ --resume
+```
+
+**Full example — DirectML, medium model, English, SRT + JSON:**
 
 ```bash
 python -m transcriber transcribe recordings/ \
+  --backend directml \
   --model medium \
-  --workers 4 \
-  --chunk 300 \
-  --output txt,srt \
   --language en \
+  --output srt,json \
   --output-dir ./transcripts \
   --verbose
 ```
 
+**Full example — CPU, fastest settings:**
+
+```bash
+python -m transcriber transcribe recordings/ \
+  --backend cpu \
+  --model small \
+  --beam-size 1 \
+  --vad \
+  --language en \
+  --output txt,srt \
+  --output-dir ./transcripts
+```
+
 ---
 
-## 4. Resume interrupted or failed jobs
+## 6. Resume interrupted or failed jobs
 
 If a run is interrupted or some files fail, resume without re-processing completed files:
 
@@ -123,22 +180,55 @@ If a run is interrupted or some files fail, resume without re-processing complet
 python -m transcriber resume
 ```
 
-To resume with different settings (e.g. more workers):
+Specify the backend to use for resuming:
 
 ```bash
-python -m transcriber resume --workers 4 --output txt,srt
+python -m transcriber resume --backend directml
+python -m transcriber resume --backend cpu --model medium
 ```
 
-The job database lives at `~/.transcriber/jobs.db`. Each run of `transcribe` adds new entries; already-completed files are skipped automatically.
+The job database lives at `~/.transcriber/jobs.db`. Each run of `transcribe` registers new entries; already-completed files are skipped automatically.
 
 ---
 
-## 5. Choosing a model
+## 7. All options
+
+### `transcribe` command
+
+| Option | Default | Description |
+|---|---|---|
+| `--backend` | `directml` | Inference backend: `directml` or `cpu` |
+| `--model` | `small` | Whisper model size: `tiny`, `base`, `small`, `medium`, `large` |
+| `--output` | `txt,srt,json` | Comma-separated output formats |
+| `--output-dir` | `./outputs` | Directory to write transcripts |
+| `--language` | auto-detect | Language code, e.g. `en`, `fr`, `de` |
+| `--chunk` | `600` | Chunk size in seconds |
+| `--beam-size` | `5` | Beam size (`1` = greedy/fastest, `5` = default). CPU backend only. |
+| `--vad` / `--no-vad` | off | Skip silent regions. CPU backend only. |
+| `--force` | off | Re-transcribe already completed files |
+| `--resume` | off | Also retry previously failed jobs |
+| `-v` / `--verbose` | off | Enable debug logging |
+
+### `resume` command
+
+| Option | Default | Description |
+|---|---|---|
+| `--backend` | `directml` | Inference backend: `directml` or `cpu` |
+| `--model` | `small` | Whisper model size |
+| `--output` | `txt,srt,json` | Output formats |
+| `--output-dir` | `./outputs` | Output directory |
+| `--language` | auto-detect | Language code |
+| `--chunk` | `600` | Chunk size in seconds |
+| `-v` / `--verbose` | off | Enable debug logging |
+
+---
+
+## 8. Choosing a model
 
 | Model | Size | Speed | Best for |
 |---|---|---|---|
-| `small` | ~460 MB | Fast | Quick drafts, clear recordings |
-| `medium` | ~1.5 GB | Moderate | Good balance of speed and accuracy |
-| `large` | ~3 GB | Slow | Noisy audio, accented speech, high accuracy |
-
-On a CPU-only machine, `small` is the practical default. Use `medium` or `large` if you have a GPU or can wait longer.
+| `tiny` | ~75 MB | Fastest | Quick drafts, very clear speech |
+| `base` | ~145 MB | Very fast | Clear recordings, low-resource environments |
+| `small` | ~460 MB | Fast | Good default for most use cases |
+| `medium` | ~1.5 GB | Moderate | Better accuracy for accented or noisy audio |
+| `large` | ~3 GB | Slowest | Best accuracy, challenging audio |

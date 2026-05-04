@@ -7,11 +7,13 @@ import typer
 
 from transcriber import db
 from transcriber.config import (
+    DEFAULT_BACKEND,
     DEFAULT_BEAM_SIZE,
     DEFAULT_CHUNK_SECONDS,
     DEFAULT_MODEL,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_WORKERS,
+    VALID_BACKENDS,
     VALID_FORMATS,
     VALID_MODELS,
 )
@@ -75,11 +77,16 @@ def _dispatch(
     output_dir: Path,
     beam_size: int = DEFAULT_BEAM_SIZE,
     vad_filter: bool = False,
+    backend: str = DEFAULT_BACKEND,
 ) -> None:
     logger = logging.getLogger("transcriber")
     total = len(jobs)
 
-    transcriber = Transcriber(model_size=model, beam_size=beam_size, vad_filter=vad_filter)
+    if backend == "directml":
+        from transcriber.transcriber_directml import DirectMLTranscriber
+        transcriber = DirectMLTranscriber(model_size=model, beam_size=beam_size, vad_filter=vad_filter)
+    else:
+        transcriber = Transcriber(model_size=model, beam_size=beam_size, vad_filter=vad_filter)
 
     t_all = time.perf_counter()
     succeeded = 0
@@ -130,9 +137,14 @@ def transcribe(
     vad: bool = typer.Option(False, "--vad/--no-vad", help="Skip silent regions (VAD). Speeds up content with long pauses."),
     resume: bool = typer.Option(False, "--resume", help="Also re-run previously failed jobs."),
     force: bool = typer.Option(False, "--force", help="Re-transcribe already completed files."),
+    backend: str = typer.Option(DEFAULT_BACKEND, "--backend", help=f"Inference backend: {VALID_BACKENDS}. 'directml' uses GPU on Windows via DirectML; 'cpu' uses faster-whisper on CPU."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging."),
 ) -> None:
     logger = setup_logging(verbose=verbose)
+
+    if backend not in VALID_BACKENDS:
+        logger.error(f"Invalid backend '{backend}'. Choose from {VALID_BACKENDS}")
+        raise typer.Exit(code=1)
 
     if model not in VALID_MODELS:
         logger.error(f"Invalid model '{model}'. Choose from {VALID_MODELS}")
@@ -165,7 +177,7 @@ def transcribe(
         logger.info("No pending jobs.")
         raise typer.Exit()
 
-    _dispatch(pending, model, language, chunk, output_formats, output_dir, beam_size=beam_size, vad_filter=vad)
+    _dispatch(pending, model, language, chunk, output_formats, output_dir, beam_size=beam_size, vad_filter=vad, backend=backend)
 
 
 @app.command()
@@ -175,9 +187,14 @@ def resume(
     language: str | None = typer.Option(None, help="Language code (e.g. en). Default: auto-detect."),
     chunk: int = typer.Option(DEFAULT_CHUNK_SECONDS, "--chunk", help="Chunk size in seconds."),
     output: str = typer.Option("txt,srt,json", help="Comma-separated output formats: txt,srt,json"),
+    backend: str = typer.Option(DEFAULT_BACKEND, "--backend", help=f"Inference backend: {VALID_BACKENDS}."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging."),
 ) -> None:
     logger = setup_logging(verbose=verbose)
+
+    if backend not in VALID_BACKENDS:
+        logger.error(f"Invalid backend '{backend}'. Choose from {VALID_BACKENDS}")
+        raise typer.Exit(code=1)
 
     db.init_db()
     output_formats = _parse_output_formats(output, logger)
@@ -188,4 +205,4 @@ def resume(
         raise typer.Exit()
 
     logger.info(f"Resuming {len(pending)} job(s)")
-    _dispatch(pending, DEFAULT_MODEL, None, DEFAULT_CHUNK_SECONDS, output_formats, output_dir)
+    _dispatch(pending, model, language, chunk, output_formats, output_dir, backend=backend)
